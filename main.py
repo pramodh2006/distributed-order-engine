@@ -1,64 +1,58 @@
+import os
 import json
 import uuid
-
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load the .env file
+load_dotenv()
 
 app = FastAPI(title="Distributed Order Engine")
 
-QUEUE_NAME = "order-queue"
-
-_cached_sqs = None
-
-
-def _get_sqs():
-    global _cached_sqs
-    if _cached_sqs is None:
-        sqs = boto3.client("sqs")
-        url = sqs.get_queue_url(QueueName=QUEUE_NAME)["QueueUrl"]
-        _cached_sqs = (sqs, url)
-    return _cached_sqs
-
-
-# This defines what the JSON payload should look like
 class OrderRequest(BaseModel):
     user_id: str
     item_id: str
     quantity: int
 
+# Initialize the SQS client
+sqs = boto3.client(
+    'sqs',
+    region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
+    endpoint_url=os.getenv('AWS_ENDPOINT_URL', 'http://127.0.0.1:4566'),
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'test'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', 'test')
+)
+
+QUEUE_URL = os.getenv('SQS_QUEUE_URL')
 
 @app.post("/checkout", status_code=202)
 async def process_checkout(order: OrderRequest):
-    order_id = str(uuid.uuid4())
-    payload = {
-        "order_id": order_id,
-        "user_id": order.user_id,
-        "item_id": order.item_id,
-        "quantity": order.quantity,
-    }
-
     try:
-        sqs, queue_url = _get_sqs()
-        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(payload))
-    except ClientError as e:
-        err = e.response.get("Error", {})
-        raise HTTPException(
-            status_code=502,
-            detail=f"SQS error: {err.get('Code', 'Unknown')} — {err.get('Message', str(e))}",
+        order_id = str(uuid.uuid4())
+        
+        # Package the order data
+        payload = {
+            "order_id": order_id,
+            "user_id": order.user_id,
+            "item_id": order.item_id,
+            "quantity": order.quantity
+        }
+
+        # Send it to SQS!
+        sqs.send_message(
+            QueueUrl=QUEUE_URL,
+            MessageBody=json.dumps(payload)
         )
-    except BotoCoreError as e:
-        raise HTTPException(status_code=503, detail=f"AWS connectivity error: {e}")
+
+        return {
+            "message": "Order received and queued for processing",
+            "order_id": order_id,
+            "status": "Processing"
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    return {
-        "message": "Order received and queued for processing",
-        "order_id": order_id,
-        "status": "Processing",
-    }
-
 
 @app.get("/health")
 async def health_check():

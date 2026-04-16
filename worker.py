@@ -1,57 +1,60 @@
-"""
-Standalone worker: long-polls order-queue, prints each order, then deletes the message.
-Requires AWS credentials and permission on the queue (same as the API).
-"""
-
+import os
 import json
-import sys
-
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+import time
+from dotenv import load_dotenv
 
-QUEUE_NAME = "order-queue"
-WAIT_TIME_SECONDS = 20
+load_dotenv()
 
+# Initialize the SQS client exactly like the API
+sqs = boto3.client(
+    'sqs',
+    region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
+    endpoint_url=os.getenv('AWS_ENDPOINT_URL', 'http://127.0.0.1:4566'),
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'test'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', 'test')
+)
 
-def main():
-    sqs = boto3.client("sqs")
-    try:
-        queue_url = sqs.get_queue_url(QueueName=QUEUE_NAME)["QueueUrl"]
-    except ClientError as e:
-        print(f"Failed to resolve queue URL: {e}", file=sys.stderr)
-        sys.exit(1)
+QUEUE_URL = os.getenv('SQS_QUEUE_URL')
 
-    print(f"Polling '{QUEUE_NAME}' (WaitTimeSeconds={WAIT_TIME_SECONDS}). Ctrl+C to stop.\n")
-
+def poll_queue():
+    print(f"Worker started. Listening to {QUEUE_URL}...")
+    
     while True:
         try:
+            # Long Polling (WaitTimeSeconds=20)
             response = sqs.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=10,
-                WaitTimeSeconds=WAIT_TIME_SECONDS,
-                AttributeNames=["All"],
- )
-            for message in response.get("Messages", []):
-                body = message.get("Body", "")
-                try:
-                    data = json.loads(body)
-                    print("Order details:")
-                    print(json.dumps(data, indent=2))
-                except json.JSONDecodeError:
-                    print("Order details (non-JSON body):")
-                    print(body)
-                print("---")
+                QueueUrl=QUEUE_URL,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=20
+            )
 
+            messages = response.get('Messages', [])
+            
+            if not messages:
+                print("No orders right now. Still listening...")
+                continue
+            
+            for message in messages:
+                # Parse the JSON order data
+                order_data = json.loads(message['Body'])
+                print(f"\n📦 PROCESSING NEW ORDER:")
+                print(f"Order ID: {order_data['order_id']}")
+                print(f"User {order_data['user_id']} bought {order_data['quantity']}x {order_data['item_id']}")
+                
+                # Simulate heavy processing (like checking inventory or charging a credit card)
+                time.sleep(2)
+                
+                # Delete the message so it doesn't get processed again
                 sqs.delete_message(
-                    QueueUrl=queue_url,
-                    ReceiptHandle=message["ReceiptHandle"],
+                    QueueUrl=QUEUE_URL,
+                    ReceiptHandle=message['ReceiptHandle']
                 )
-        except KeyboardInterrupt:
-            print("\nWorker stopped.")
-            break
-        except (ClientError, BotoCoreError) as e:
-            print(f"SQS error (will retry): {e}", file=sys.stderr)
+                print(f"✅ Order {order_data['order_id']} finished and removed from queue!")
 
+        except Exception as e:
+            print(f"Worker Error: {e}")
+            time.sleep(5) # Pause briefly before trying again
 
 if __name__ == "__main__":
-    main()
+    poll_queue()
