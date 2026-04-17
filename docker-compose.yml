@@ -9,7 +9,8 @@ services:
       - DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - LOCALSTACK_AUTH_TOKEN=ls-sumeGixo-3255-LUQI-poXI-YAGI38464eff
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+
   db:
     image: postgres:15
     ports:
@@ -20,6 +21,11 @@ services:
       - POSTGRES_DB=order_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
 
 volumes:
   postgres_data:
