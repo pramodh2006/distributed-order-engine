@@ -2,11 +2,24 @@ services:
   localstack:
     image: localstack/localstack:latest
     ports:
-      - "4566:4566"            # LocalStack API Gateway
-      - "4510-4559:4510-4559"  # external services port range
+      - "4566:4566"
+      - "4510-4559:4510-4559"
     environment:
       - SERVICES=sqs
       - DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - LOCALSTACK_AUTH_TOKEN=ls-sumeGixo-3255-LUQI-poXI-YAGI38464eff
+  db:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=order_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

@@ -25,7 +25,12 @@ sqs = boto3.client(
     aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', 'test')
 )
 
-QUEUE_URL = os.getenv('SQS_QUEUE_URL')
+# --- THE FIX IS HERE ---
+raw_queue_url = os.getenv('SQS_QUEUE_URL')
+if raw_queue_url and "localhost.localstack.cloud" in raw_queue_url:
+    QUEUE_URL = raw_queue_url.replace("sqs.us-east-1.localhost.localstack.cloud", "127.0.0.1")
+else:
+    QUEUE_URL = raw_queue_url
 
 @app.post("/checkout", status_code=202)
 async def process_checkout(order: OrderRequest):

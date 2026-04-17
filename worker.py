@@ -2,9 +2,20 @@ import os
 import json
 import boto3
 import time
+from botocore.config import Config
 from dotenv import load_dotenv
 
+# Import our new database logic
+from database import SessionLocal, Order, init_db
+
 load_dotenv()
+
+# Add a robust config so it doesn't give up instantly
+my_config = Config(
+    retries={'max_attempts': 5, 'mode': 'standard'},
+    connect_timeout=5,
+    read_timeout=10
+)
 
 # Initialize the SQS client exactly like the API
 sqs = boto3.client(
@@ -12,12 +23,21 @@ sqs = boto3.client(
     region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
     endpoint_url=os.getenv('AWS_ENDPOINT_URL', 'http://127.0.0.1:4566'),
     aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'test'),
-    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', 'test')
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', 'test'),
+    config=my_config
 )
 
-QUEUE_URL = os.getenv('SQS_QUEUE_URL')
-
+# Grab the queue URL from .env, but force it to use 127.0.0.1 so Windows doesn't block it
+raw_queue_url = os.getenv('SQS_QUEUE_URL')
+if "localhost.localstack.cloud" in raw_queue_url:
+    QUEUE_URL = raw_queue_url.replace("sqs.us-east-1.localhost.localstack.cloud", "127.0.0.1")
+else:
+    QUEUE_URL = raw_queue_url
 def poll_queue():
+    # 1. Initialize the PostgreSQL database tables
+    print("Initializing Database...")
+    init_db()
+    
     print(f"Worker started. Listening to {QUEUE_URL}...")
     
     while True:
@@ -42,10 +62,29 @@ def poll_queue():
                 print(f"Order ID: {order_data['order_id']}")
                 print(f"User {order_data['user_id']} bought {order_data['quantity']}x {order_data['item_id']}")
                 
-                # Simulate heavy processing (like checking inventory or charging a credit card)
+                # Simulate heavy processing
                 time.sleep(2)
                 
-                # Delete the message so it doesn't get processed again
+                # 2. Save the order to PostgreSQL
+                db = SessionLocal()
+                try:
+                    new_order = Order(
+                        order_id=order_data['order_id'],
+                        user_id=order_data['user_id'],
+                        item_id=order_data['item_id'],
+                        quantity=order_data['quantity'],
+                        status="Completed"
+                    )
+                    db.add(new_order)
+                    db.commit()
+                    print(f"💾 Saved Order {order_data['order_id']} to PostgreSQL database!")
+                except Exception as db_err:
+                    print(f"Database Error: {db_err}")
+                    db.rollback()
+                finally:
+                    db.close()
+                
+                # 3. Delete the message so it doesn't get processed again
                 sqs.delete_message(
                     QueueUrl=QUEUE_URL,
                     ReceiptHandle=message['ReceiptHandle']
